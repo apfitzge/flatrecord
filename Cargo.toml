@@ -1,0 +1,15 @@
+[package]
+name = "flatrecord"
+version = "0.1.0"
+edition = "2024"
+description = "Compact, schema-described binary record encoding with a derive macro."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/apfitzge/flatrecord"
+readme = "README.md"
+keywords = ["serialization", "binary", "packed", "schema", "derive"]
+categories = ["encoding", "data-structures"]
+
+[dependencies]
+flatrecord-derive = { path = "flatrecord-derive", version = "0.1.0" }
+thiserror = "2.0.18"
+wincode = { version = "0.5.5", features = ["derive"] }

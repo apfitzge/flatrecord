@@ -380,7 +380,12 @@ fn dynamic_struct_decode_rejects_fixed_field_outside_payload() {
         vec![RecordDef::new(
             "BadRecord".to_owned(),
             None,
-            vec![FieldDef::new("value".to_owned(), FieldType::U64, 8, Some(8))],
+            vec![FieldDef::new(
+                "value".to_owned(),
+                FieldType::U64,
+                8,
+                Some(8),
+            )],
         )],
     )
     .unwrap();

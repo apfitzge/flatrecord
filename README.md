@@ -1,5 +1,7 @@
 # flatrecord
 
+[![Rust CI](https://github.com/apfitzge/flatrecord/actions/workflows/ci.yml/badge.svg)](https://github.com/apfitzge/flatrecord/actions/workflows/ci.yml)
+
 Compact, schema-described binary record encoding with a derive macro.
 
 `flatrecord` encodes structs and enums to a tightly packed little-endian wire

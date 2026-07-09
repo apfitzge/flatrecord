@@ -9,6 +9,10 @@ readme = "README.md"
 keywords = ["serialization", "binary", "packed", "schema", "derive"]
 categories = ["encoding", "data-structures"]
 
+[workspace]
+members = [".", "flatrecord-derive"]
+resolver = "3"
+
 [dependencies]
 flatrecord-derive = { path = "flatrecord-derive", version = "0.1.0" }
 thiserror = "2.0.18"

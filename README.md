@@ -1,6 +1,6 @@
 # flatrecord
 
-[![Rust CI](https://github.com/apfitzge/flatrecord/actions/workflows/ci.yml/badge.svg)](https://github.com/apfitzge/flatrecord/actions/workflows/ci.yml)
+[![Rust CI](https://github.com/anza-xyz/flatrecord/actions/workflows/ci.yml/badge.svg)](https://github.com/anza-xyz/flatrecord/actions/workflows/ci.yml)
 
 Compact, schema-described binary record encoding with a derive macro.
 
@@ -35,6 +35,4 @@ prepare it once, and decode many records.
 
 ## License
 
-Dual-licensed under either the [MIT license](https://opensource.org/licenses/MIT)
-or the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0),
-at your option.
+Licensed under the [Apache License, Version 2.0](LICENSE).

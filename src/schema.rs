@@ -29,6 +29,18 @@ pub struct FieldDef {
     size: Option<u32>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, wincode::SchemaWrite, wincode::SchemaRead)]
+pub struct EnumDef {
+    name: String,
+    variants: Box<[EnumVariantDef]>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, wincode::SchemaWrite, wincode::SchemaRead)]
+pub struct EnumVariantDef {
+    name: String,
+    index: u8,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FieldIndex(usize);
 
@@ -73,6 +85,7 @@ pub enum FieldType {
     FixedArray { elem: PrimitiveType, len: u32 },
     String,
     Vec { elem: PrimitiveType },
+    Enum(EnumDef),
 }
 
 impl Schema {
@@ -115,6 +128,7 @@ impl Schema {
             // Errors if the field set is malformed (unsized field, offset/size
             // overflow, or a fixed record whose declared size disagrees with its fields).
             let header_size = record.header_size()?;
+            record.validate_fields()?;
             if let Some(size) = record.size {
                 if record.has_dynamic_fields() {
                     if size < header_size {
@@ -207,6 +221,20 @@ impl RecordDef {
     #[inline]
     pub fn field(&self, index: FieldIndex) -> Option<&FieldDef> {
         self.fields.get(index.0)
+    }
+
+    fn validate_fields(&self) -> Result<()> {
+        for field in &self.fields {
+            if let FieldType::Enum(enum_def) = &field.ty {
+                enum_def.validate().map_err(|error| {
+                    Error::Schema(format!(
+                        "field `{}` has invalid enum definition: {}",
+                        field.name, error
+                    ))
+                })?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -313,6 +341,66 @@ impl FieldDef {
     }
 }
 
+impl EnumDef {
+    #[inline]
+    pub fn new(name: String, variants: Vec<EnumVariantDef>) -> Self {
+        Self {
+            name,
+            variants: variants.into_boxed_slice(),
+        }
+    }
+
+    #[inline]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[inline]
+    pub fn variants(&self) -> &[EnumVariantDef] {
+        &self.variants
+    }
+
+    #[inline]
+    pub fn variant_for_index(&self, index: u8) -> Option<&EnumVariantDef> {
+        self.variants.iter().find(|variant| variant.index == index)
+    }
+
+    fn validate(&self) -> std::result::Result<(), String> {
+        for (position, variant) in self.variants.iter().enumerate() {
+            if self.variants[..position]
+                .iter()
+                .any(|previous| previous.name == variant.name)
+            {
+                return Err(format!("duplicate variant name `{}`", variant.name));
+            }
+            if self.variants[..position]
+                .iter()
+                .any(|previous| previous.index == variant.index)
+            {
+                return Err(format!("duplicate variant index {}", variant.index));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl EnumVariantDef {
+    #[inline]
+    pub fn new(name: String, index: u8) -> Self {
+        Self { name, index }
+    }
+
+    #[inline]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[inline]
+    pub fn index(&self) -> u8 {
+        self.index
+    }
+}
+
 impl PrimitiveType {
     #[inline]
     pub fn size(self) -> u32 {
@@ -335,6 +423,7 @@ impl FieldType {
             Self::U64 | Self::I64 | Self::F64 => 8,
             Self::FixedArray { elem, len } => elem.size().checked_mul(*len)?,
             Self::String | Self::Vec { .. } => 8,
+            Self::Enum(_) => 1,
         })
     }
 

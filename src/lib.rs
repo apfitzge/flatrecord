@@ -4,10 +4,13 @@ pub mod dynamic;
 pub mod error;
 pub mod schema;
 
-pub use dynamic::{DynamicRecord, FieldRef, PreparedSchema, ValueRef};
+pub use dynamic::{DynamicRecord, EnumValueRef, FieldRef, PreparedSchema, ValueRef};
 pub use error::{Error, Result};
-pub use flatrecord_derive::FlatRecord;
-pub use schema::{FieldDef, FieldIndex, FieldType, PrimitiveType, RecordDef, RootDef, Schema};
+pub use flatrecord_derive::{FlatEnum, FlatRecord};
+pub use schema::{
+    EnumDef, EnumVariantDef, FieldDef, FieldIndex, FieldType, PrimitiveType, RecordDef, RootDef,
+    Schema,
+};
 
 pub trait FlatRecord: Sized {
     const RECORD_NAME: &'static str;
@@ -24,6 +27,41 @@ pub trait FlatRecord: Sized {
     fn from_record_bytes(src: &[u8]) -> Result<Self> {
         Self::decode_payload(src)
     }
+}
+
+/// A one-byte enum field encoded by declaration index.
+///
+/// `#[derive(FlatEnum)]` accepts fieldless enums with at most 256 variants. The
+/// declaration order is the wire ABI, so explicit discriminants are rejected.
+///
+/// ```compile_fail
+/// use flatrecord::FlatEnum;
+///
+/// #[derive(Copy, Clone, FlatEnum)]
+/// enum EventKind {
+///     Created = 1,
+///     Updated,
+/// }
+/// ```
+///
+/// Data-carrying variants are rejected too:
+///
+/// ```compile_fail
+/// use flatrecord::FlatEnum;
+///
+/// #[derive(Copy, Clone, FlatEnum)]
+/// enum EventKind {
+///     Created(u8),
+///     Updated,
+/// }
+/// ```
+pub trait FlatEnum: Sized + Copy {
+    const ENUM_NAME: &'static str;
+    const SIZE: usize = 1;
+
+    fn enum_def() -> EnumDef;
+    fn to_index(self) -> u8;
+    fn try_from_index(index: u8) -> Option<Self>;
 }
 
 pub trait RecordRoot: Sized {

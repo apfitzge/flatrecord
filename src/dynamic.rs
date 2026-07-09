@@ -1,5 +1,6 @@
 use crate::schema::{
-    FieldDef, FieldIndex, FieldType, PrimitiveType, RecordDef, RecordLayout, RootDef,
+    EnumDef, EnumVariantDef, FieldDef, FieldIndex, FieldType, PrimitiveType, RecordDef,
+    RecordLayout, RootDef,
 };
 use crate::{Error, Result, Schema};
 
@@ -52,8 +53,14 @@ pub struct FieldRef<'schema, 'data> {
     payload_limit: usize,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct EnumValueRef<'schema> {
+    enum_def: &'schema EnumDef,
+    variant: &'schema EnumVariantDef,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ValueRef<'a> {
+pub enum ValueRef<'schema, 'data> {
     U8(u8),
     U16(u16),
     U32(u32),
@@ -65,9 +72,10 @@ pub enum ValueRef<'a> {
     F32(f32),
     F64(f64),
     Bool(bool),
-    Bytes(&'a [u8]),
-    Str(&'a str),
-    ArrayBytes(&'a [u8]),
+    Bytes(&'data [u8]),
+    Str(&'data str),
+    ArrayBytes(&'data [u8]),
+    Enum(EnumValueRef<'schema>),
 }
 
 pub struct FieldIter<'schema, 'data> {
@@ -200,12 +208,49 @@ impl<'schema, 'data> FieldRef<'schema, 'data> {
     }
 
     #[inline(always)]
-    pub fn value(&self) -> Result<ValueRef<'data>> {
+    pub fn value(&self) -> Result<ValueRef<'schema, 'data>> {
         read_value(self.field, self.payload, self.payload_limit)
     }
 }
 
-impl ValueRef<'_> {
+impl EnumValueRef<'_> {
+    #[inline]
+    pub fn enum_name(&self) -> &str {
+        self.enum_def.name()
+    }
+
+    #[inline]
+    pub fn variant_name(&self) -> &str {
+        self.variant.name()
+    }
+
+    #[inline]
+    pub fn index(&self) -> u8 {
+        self.variant.index()
+    }
+
+    #[inline]
+    pub fn enum_def(&self) -> &EnumDef {
+        self.enum_def
+    }
+
+    #[inline]
+    pub fn variant(&self) -> &EnumVariantDef {
+        self.variant
+    }
+}
+
+impl std::fmt::Debug for EnumValueRef<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EnumValueRef")
+            .field("enum_name", &self.enum_name())
+            .field("variant_name", &self.variant_name())
+            .field("index", &self.index())
+            .finish()
+    }
+}
+
+impl ValueRef<'_, '_> {
     #[inline]
     pub fn type_name(&self) -> &'static str {
         match self {
@@ -223,6 +268,7 @@ impl ValueRef<'_> {
             Self::Bytes(_) => "bytes",
             Self::Str(_) => "str",
             Self::ArrayBytes(_) => "array_bytes",
+            Self::Enum(_) => "enum",
         }
     }
 }
@@ -253,11 +299,11 @@ fn validate_payload_len(layout: &RecordLayout, size: Option<u32>, payload: &[u8]
 }
 
 #[inline(always)]
-fn read_value<'a>(
-    field: &FieldDef,
-    payload: &'a [u8],
+fn read_value<'schema, 'data>(
+    field: &'schema FieldDef,
+    payload: &'data [u8],
     payload_limit: usize,
-) -> Result<ValueRef<'a>> {
+) -> Result<ValueRef<'schema, 'data>> {
     let ptr = unsafe {
         // SAFETY: DynamicRecord construction calls validate_payload_len, which checks
         // payload.len() >= header_size. header_size is the maximum of every fixed
@@ -318,6 +364,20 @@ fn read_value<'a>(
                 value,
             }),
         },
+        FieldType::Enum(enum_def) => {
+            let index = unsafe {
+                // SAFETY: DynamicRecord validated this field's fixed-width range.
+                ptr.read_unaligned()
+            };
+            let variant = enum_def
+                .variant_for_index(index)
+                .ok_or_else(|| Error::InvalidEnum {
+                    field: field.name().to_owned(),
+                    enum_name: enum_def.name().to_owned(),
+                    value: index,
+                })?;
+            Ok(ValueRef::Enum(EnumValueRef { enum_def, variant }))
+        }
         FieldType::FixedArray {
             elem: PrimitiveType::U8,
             len,
@@ -351,7 +411,10 @@ fn read_value<'a>(
 }
 
 #[inline]
-fn read_array_value<'a>(elem: PrimitiveType, bytes: &'a [u8]) -> Result<ValueRef<'a>> {
+fn read_array_value<'schema, 'data>(
+    elem: PrimitiveType,
+    bytes: &'data [u8],
+) -> Result<ValueRef<'schema, 'data>> {
     match elem {
         PrimitiveType::U8 => Ok(ValueRef::Bytes(bytes)),
         PrimitiveType::U16

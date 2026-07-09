@@ -33,6 +33,12 @@ pub enum Error {
     },
     #[error("field `{field}` has invalid bool byte {value}")]
     InvalidBool { field: String, value: u8 },
+    #[error("field `{field}` has invalid `{enum_name}` enum index {value}")]
+    InvalidEnum {
+        field: String,
+        enum_name: String,
+        value: u8,
+    },
     #[error("field `{field}` contains invalid UTF-8")]
     InvalidUtf8 { field: String },
     #[error("{0}")]

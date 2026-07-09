@@ -1,4 +1,10 @@
-use flatrecord::{DynamicRecord, FlatRecord, PreparedSchema, RecordRoot, Schema};
+use flatrecord::{DynamicRecord, FlatEnum, FlatRecord, PreparedSchema, RecordRoot, Schema};
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, FlatEnum)]
+pub enum EventKind {
+    Created,
+    Updated,
+}
 
 #[derive(Debug, PartialEq, FlatRecord)]
 pub struct RecordType1 {
@@ -6,6 +12,7 @@ pub struct RecordType1 {
     pub value: u64,
     pub previous_value: u64,
     pub bytes: [u8; 32],
+    pub kind: EventKind,
 }
 
 #[derive(Debug, PartialEq, FlatRecord)]
@@ -27,9 +34,10 @@ fn main() -> flatrecord::Result<()> {
         value: 456,
         previous_value: 455,
         bytes: [0; 32],
+        kind: EventKind::Created,
     });
 
-    let mut bytes = [0u8; 58];
+    let mut bytes = [0u8; 59];
     let written = record.encode_record(&mut bytes)?;
     let schema = Record::schema();
     let schema_bytes = wincode::serialize(&schema)

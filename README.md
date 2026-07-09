@@ -17,9 +17,10 @@ the payload.
 - **Typed path** — encode/decode directly to and from your own types.
 - **Dynamic path** — decode against a runtime `Schema` with `PreparedSchema` +
   `DynamicRecord`, walking fields by name and reading their values.
-- Fixed-width primitives, `bool`, `[T; N]`, `String`, and `Vec<T>` for primitive
-  `T` are supported. Structs are single records; enums with one-field tuple
-  variants become tagged unions (the variant index is the 2-byte wire tag).
+- Fixed-width primitives, `bool`, `[T; N]`, `String`, `Vec<T>` for primitive
+  `T`, and simple `FlatEnum` fields are supported. Structs are single records;
+  enums with one-field tuple variants become tagged unions (the variant index is
+  the 2-byte wire tag).
 
 ## Example
 

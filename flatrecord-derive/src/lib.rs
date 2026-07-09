@@ -14,6 +14,14 @@ pub fn derive_flat_record(input: TokenStream) -> TokenStream {
         .into()
 }
 
+#[proc_macro_derive(FlatEnum)]
+pub fn derive_flat_enum(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    expand_flat_enum(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
 fn expand_flat_record(input: DeriveInput) -> syn::Result<TokenStream2> {
     if !input.generics.params.is_empty() {
         return Err(syn::Error::new_spanned(
@@ -33,6 +41,102 @@ fn expand_flat_record(input: DeriveInput) -> syn::Result<TokenStream2> {
             "FlatRecord does not support unions",
         )),
     }
+}
+
+fn expand_flat_enum(input: DeriveInput) -> syn::Result<TokenStream2> {
+    if !input.generics.params.is_empty() {
+        return Err(syn::Error::new_spanned(
+            input.generics,
+            "FlatEnum does not support generics in v1",
+        ));
+    }
+
+    let ident = input.ident;
+    let data = match input.data {
+        Data::Enum(data) => data,
+        Data::Struct(data) => {
+            return Err(syn::Error::new_spanned(
+                data.struct_token,
+                "FlatEnum can only be derived for enums",
+            ));
+        }
+        Data::Union(data) => {
+            return Err(syn::Error::new_spanned(
+                data.union_token,
+                "FlatEnum can only be derived for enums",
+            ));
+        }
+    };
+
+    if data.variants.len() > 256 {
+        return Err(syn::Error::new_spanned(
+            ident,
+            "FlatEnum supports at most 256 variants",
+        ));
+    }
+
+    let mut variant_defs = Vec::new();
+    let mut to_index_arms = Vec::new();
+    let mut try_from_index_arms = Vec::new();
+
+    for (index, variant) in data.variants.into_iter().enumerate() {
+        let variant_ident = variant.ident;
+        match variant.fields {
+            Fields::Unit => {}
+            other => {
+                return Err(syn::Error::new_spanned(
+                    other,
+                    "FlatEnum variants must be fieldless unit variants",
+                ));
+            }
+        }
+        if let Some((_, expr)) = variant.discriminant {
+            return Err(syn::Error::new_spanned(
+                expr,
+                "FlatEnum variants must not use explicit discriminants; declaration index is the wire value",
+            ));
+        }
+
+        let variant_name = variant_ident.to_string();
+        let index = index as u8;
+        variant_defs.push(quote! {
+            ::flatrecord::schema::EnumVariantDef::new(#variant_name.to_owned(), #index)
+        });
+        to_index_arms.push(quote! {
+            Self::#variant_ident => #index,
+        });
+        try_from_index_arms.push(quote! {
+            #index => Some(Self::#variant_ident),
+        });
+    }
+
+    let enum_name = ident.to_string();
+
+    Ok(quote! {
+        impl ::flatrecord::FlatEnum for #ident {
+            const ENUM_NAME: &'static str = #enum_name;
+
+            fn enum_def() -> ::flatrecord::schema::EnumDef {
+                ::flatrecord::schema::EnumDef::new(
+                    Self::ENUM_NAME.to_owned(),
+                    vec![#(#variant_defs),*],
+                )
+            }
+
+            fn to_index(self) -> u8 {
+                match self {
+                    #(#to_index_arms)*
+                }
+            }
+
+            fn try_from_index(index: u8) -> Option<Self> {
+                match index {
+                    #(#try_from_index_arms)*
+                    _ => None,
+                }
+            }
+        }
+    })
 }
 
 fn expand_struct(
@@ -489,6 +593,7 @@ enum SupportedType {
     FixedArray { elem: Primitive, len: usize },
     String,
     Vec { elem: Primitive },
+    FlatEnum(Box<Type>),
 }
 
 #[derive(Clone, Copy)]
@@ -522,10 +627,13 @@ impl SupportedType {
         if let Type::Array(array) = ty {
             return parse_array(array);
         }
+        if let Some(enum_ty) = parse_flat_enum(ty) {
+            return Ok(Self::FlatEnum(Box::new(enum_ty)));
+        }
 
         Err(syn::Error::new_spanned(
             ty,
-            "unsupported FlatRecord field type in v1; supported types are fixed-width primitives, bool, [T; N], String, and Vec<T> for primitive T",
+            "unsupported FlatRecord field type in v1; supported types are fixed-width primitives, bool, [T; N], String, Vec<T> for primitive T, and FlatEnum field types",
         ))
     }
 
@@ -535,6 +643,7 @@ impl SupportedType {
             Self::Bool => 1,
             Self::FixedArray { elem, len } => elem.size() * *len,
             Self::String | Self::Vec { .. } => 8,
+            Self::FlatEnum(_) => 1,
         }
     }
 
@@ -557,6 +666,10 @@ impl SupportedType {
             Self::Vec { elem } => {
                 let elem = elem.primitive_type_tokens();
                 quote!(::flatrecord::schema::FieldType::Vec { elem: #elem })
+            }
+            Self::FlatEnum(ty) => {
+                let ty = ty.as_ref();
+                quote!(::flatrecord::schema::FieldType::Enum(<#ty as ::flatrecord::FlatEnum>::enum_def()))
             }
         }
     }
@@ -635,6 +748,15 @@ impl SupportedType {
                     }
                 }
             }
+            Self::FlatEnum(_) => quote! {
+                unsafe {
+                    // SAFETY: encode_payload checked that dst is large enough for the
+                    // full payload before fixed-offset writes.
+                    __flatrecord_dst
+                        .add(#offset)
+                        .write_unaligned(::flatrecord::FlatEnum::to_index(self.#field));
+                }
+            },
             Self::String | Self::Vec { .. } => quote!(),
         }
     }
@@ -817,6 +939,23 @@ impl SupportedType {
                             __flatrecord_ptr.add(#elem_size)
                         };
                     }
+                }
+            }
+            Self::FlatEnum(ty) => {
+                let ty = ty.as_ref();
+                let name = field.to_string();
+                quote! {
+                    let __flatrecord_value = unsafe {
+                        // SAFETY: decode_payload validated the full fixed field range
+                        // before decoding fixed-offset fields.
+                        src.as_ptr().add(#offset).read_unaligned()
+                    };
+                    let #field = <#ty as ::flatrecord::FlatEnum>::try_from_index(__flatrecord_value)
+                        .ok_or_else(|| ::flatrecord::Error::InvalidEnum {
+                            field: #name.to_owned(),
+                            enum_name: <#ty as ::flatrecord::FlatEnum>::ENUM_NAME.to_owned(),
+                            value: __flatrecord_value,
+                        })?;
                 }
             }
             Self::String => {
@@ -1199,6 +1338,23 @@ fn parse_vec(ty: &Type) -> syn::Result<Option<Primitive>> {
         )
     })?;
     Ok(Some(elem))
+}
+
+fn parse_flat_enum(ty: &Type) -> Option<Type> {
+    let Type::Path(TypePath { qself: None, path }) = ty else {
+        return None;
+    };
+    if path.segments.is_empty() {
+        return None;
+    }
+    if !path
+        .segments
+        .iter()
+        .all(|segment| matches!(segment.arguments, PathArguments::None))
+    {
+        return None;
+    }
+    Some(ty.clone())
 }
 
 fn array_len(expr: &Expr) -> syn::Result<usize> {

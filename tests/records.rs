@@ -1,6 +1,6 @@
 use flatrecord::{
-    DynamicRecord, Error, FieldDef, FieldIndex, FieldType, FlatRecord, PreparedSchema,
-    PrimitiveType, RecordDef, RecordRoot, RootDef, Schema, ValueRef,
+    DynamicRecord, EnumDef, EnumVariantDef, Error, FieldDef, FieldIndex, FieldType, FlatEnum,
+    FlatRecord, PreparedSchema, PrimitiveType, RecordDef, RecordRoot, RootDef, Schema, ValueRef,
 };
 
 fn u64_field(record: &DynamicRecord, index: FieldIndex) -> u64 {
@@ -10,12 +10,19 @@ fn u64_field(record: &DynamicRecord, index: FieldIndex) -> u64 {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, FlatEnum)]
+pub enum EventKind {
+    Created,
+    Updated,
+}
+
 #[derive(Debug, PartialEq, FlatRecord)]
 pub struct RecordType1 {
     pub timestamp: u64,
     pub value: u64,
     pub previous_value: u64,
     pub bytes: [u8; 32],
+    pub kind: EventKind,
 }
 
 #[derive(Debug, PartialEq, FlatRecord)]
@@ -48,6 +55,7 @@ fn record_type1() -> RecordType1 {
         value: 456,
         previous_value: 455,
         bytes: [9u8; 32],
+        kind: EventKind::Created,
     }
 }
 
@@ -68,9 +76,9 @@ fn record_type3() -> RecordType3 {
     }
 }
 
-fn encode_type1(record: &RecordType1) -> [u8; 56] {
-    let mut bytes = [0u8; 56];
-    assert_eq!(record.encode_payload(&mut bytes).unwrap(), 56);
+fn encode_type1(record: &RecordType1) -> [u8; 57] {
+    let mut bytes = [0u8; 57];
+    assert_eq!(record.encode_payload(&mut bytes).unwrap(), 57);
     bytes
 }
 
@@ -80,9 +88,9 @@ fn encode_type2(record: &RecordType2) -> [u8; 48] {
     bytes
 }
 
-fn encode_type1_root(record: RecordType1) -> [u8; 58] {
-    let mut bytes = [0u8; 58];
-    assert_eq!(Record::Type1(record).encode_record(&mut bytes).unwrap(), 58);
+fn encode_type1_root(record: RecordType1) -> [u8; 59] {
+    let mut bytes = [0u8; 59];
+    assert_eq!(Record::Type1(record).encode_record(&mut bytes).unwrap(), 59);
     bytes
 }
 
@@ -112,41 +120,55 @@ fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
 
 #[test]
 fn fixed_payload_sizes_are_exact() {
-    assert_eq!(RecordType1::PAYLOAD_SIZE, 8 + 8 + 8 + 32);
+    assert_eq!(RecordType1::PAYLOAD_SIZE, 8 + 8 + 8 + 32 + 1);
     assert_eq!(RecordType2::PAYLOAD_SIZE, 8 + 8 + 32);
 
     let type1_bytes = encode_type1(&record_type1());
     let type2_bytes = encode_type2(&record_type2());
 
-    assert_eq!(type1_bytes.len(), 56);
+    assert_eq!(type1_bytes.len(), 57);
     assert_eq!(type2_bytes.len(), 48);
+    assert_eq!(type1_bytes[56], 0);
 
     let type1_def = RecordType1::record_def();
-    assert_eq!(type1_def.size(), Some(56));
+    assert_eq!(type1_def.size(), Some(57));
     assert_eq!(
         type1_def
             .fields()
             .iter()
             .map(FieldDef::offset)
             .collect::<Vec<_>>(),
-        vec![0, 8, 16, 24]
+        vec![0, 8, 16, 24, 56]
     );
+    match type1_def.fields()[4].ty() {
+        FieldType::Enum(enum_def) => {
+            assert_eq!(enum_def.name(), "EventKind");
+            assert_eq!(enum_def.variants()[0].name(), "Created");
+            assert_eq!(enum_def.variants()[0].index(), 0);
+            assert_eq!(enum_def.variants()[1].name(), "Updated");
+            assert_eq!(enum_def.variants()[1].index(), 1);
+        }
+        other => panic!("expected enum field, got {other:?}"),
+    }
 }
 
 #[test]
 fn enum_root_records_use_two_byte_tag_and_payload_only() {
     let bytes = encode_type1_root(record_type1());
 
-    assert_eq!(bytes.len(), 2 + 56);
+    assert_eq!(bytes.len(), 2 + 57);
     assert_eq!(&bytes[..2], &0u16.to_le_bytes());
     assert_eq!(&bytes[2..10], &123u64.to_le_bytes());
     assert_eq!(&bytes[10..18], &456u64.to_le_bytes());
+    assert_eq!(bytes[58], EventKind::Created.to_index());
 
     for forbidden in [
         b"timestamp".as_slice(),
         b"value".as_slice(),
         b"RecordType1".as_slice(),
         b"Record".as_slice(),
+        b"EventKind".as_slice(),
+        b"Created".as_slice(),
     ] {
         assert!(
             !contains_subslice(&bytes, forbidden),
@@ -154,6 +176,15 @@ fn enum_root_records_use_two_byte_tag_and_payload_only() {
             std::str::from_utf8(forbidden).unwrap()
         );
     }
+}
+
+#[test]
+fn flat_enum_indices_follow_declaration_order() {
+    assert_eq!(EventKind::Created.to_index(), 0);
+    assert_eq!(EventKind::Updated.to_index(), 1);
+    assert_eq!(EventKind::try_from_index(0), Some(EventKind::Created));
+    assert_eq!(EventKind::try_from_index(1), Some(EventKind::Updated));
+    assert_eq!(EventKind::try_from_index(2), None);
 }
 
 #[test]
@@ -266,6 +297,15 @@ fn dynamic_enum_root_decode_works_from_exported_schema() {
     assert_eq!(fields[1], ("value".to_owned(), ValueRef::U64(456)));
     assert_eq!(fields[2], ("previous_value".to_owned(), ValueRef::U64(455)));
     assert_eq!(fields[3], ("bytes".to_owned(), ValueRef::Bytes(&[9u8; 32])));
+    assert_eq!(fields[4].0, "kind");
+    match fields[4].1 {
+        ValueRef::Enum(value) => {
+            assert_eq!(value.enum_name(), "EventKind");
+            assert_eq!(value.variant_name(), "Created");
+            assert_eq!(value.index(), 0);
+        }
+        other => panic!("expected enum value, got {other:?}"),
+    }
 }
 
 #[test]
@@ -402,23 +442,87 @@ fn dynamic_struct_decode_rejects_fixed_field_outside_payload() {
 }
 
 #[test]
+fn invalid_enum_indexes_are_rejected_on_access() {
+    let mut payload = encode_type1(&record_type1());
+    payload[56] = 99;
+    assert!(matches!(
+        RecordType1::from_record_bytes(&payload),
+        Err(Error::InvalidEnum {
+            field,
+            enum_name,
+            value: 99,
+        }) if field == "kind" && enum_name == "EventKind"
+    ));
+
+    let schema = Record::schema();
+    let prepared = PreparedSchema::new(schema).unwrap();
+    let kind = prepared.schema().records()[0].field_index("kind").unwrap();
+    let mut record = encode_type1_root(record_type1());
+    record[58] = 99;
+    assert!(matches!(
+        Record::from_record_bytes(&record),
+        Err(Error::InvalidEnum {
+            field,
+            enum_name,
+            value: 99,
+        }) if field == "kind" && enum_name == "EventKind"
+    ));
+    let decoded = DynamicRecord::read(&prepared, &record).unwrap();
+    assert!(matches!(
+        decoded.field(kind).unwrap().value(),
+        Err(Error::InvalidEnum {
+            field,
+            enum_name,
+            value: 99,
+        }) if field == "kind" && enum_name == "EventKind"
+    ));
+}
+
+#[test]
+fn schema_rejects_duplicate_enum_indexes() {
+    assert!(matches!(
+        Schema::from_parts(
+            1,
+            RootDef::Struct,
+            vec![RecordDef::new(
+                "BadRecord".to_owned(),
+                Some(1),
+                vec![FieldDef::new(
+                    "kind".to_owned(),
+                    FieldType::Enum(EnumDef::new(
+                        "EventKind".to_owned(),
+                        vec![
+                            EnumVariantDef::new("Created".to_owned(), 0),
+                            EnumVariantDef::new("Updated".to_owned(), 0),
+                        ],
+                    )),
+                    0,
+                    Some(1),
+                )],
+            )],
+        ),
+        Err(Error::Schema(message)) if message.contains("duplicate variant index 0")
+    ));
+}
+
+#[test]
 fn undersized_payload_lengths_are_rejected() {
     let payload = encode_type1(&record_type1());
 
     assert!(matches!(
-        RecordType1::from_record_bytes(&payload[..55]),
+        RecordType1::from_record_bytes(&payload[..56]),
         Err(Error::UnexpectedLength {
-            expected: 56,
-            actual: 55
+            expected: 57,
+            actual: 56
         })
     ));
 
-    let mut record_bytes = [0u8; 59];
+    let mut record_bytes = [0u8; 60];
     let record = Record::Type1(record_type1());
     let written = Record::Type1(record_type1())
-        .encode_record(&mut record_bytes[..58])
+        .encode_record(&mut record_bytes[..59])
         .unwrap();
-    assert_eq!(written, 58);
+    assert_eq!(written, 59);
 
     let decoded = Record::from_record_bytes(&record_bytes).unwrap();
     assert_eq!(decoded, record);
@@ -449,21 +553,21 @@ fn incorrect_record_tags_are_rejected() {
 
 #[test]
 fn undersized_write_buffers_are_rejected() {
-    let mut payload = [0u8; 55];
+    let mut payload = [0u8; 56];
     assert!(matches!(
         record_type1().encode_payload(&mut payload),
         Err(Error::BufferTooSmall {
-            required: 56,
-            actual: 55
+            required: 57,
+            actual: 56
         })
     ));
 
-    let mut record = [0u8; 57];
+    let mut record = [0u8; 58];
     assert!(matches!(
         Record::Type1(record_type1()).encode_record(&mut record),
         Err(Error::BufferTooSmall {
-            required: 58,
-            actual: 57
+            required: 59,
+            actual: 58
         })
     ));
 }

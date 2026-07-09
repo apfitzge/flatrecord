@@ -1,11 +1,12 @@
 [package]
 name = "flatrecord-derive"
+authors = ["Anza Maintainers <maintainers@anza.xyz>"]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
 description = "Derive macro for the flatrecord crate."
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/apfitzge/flatrecord"
+homepage = "https://anza.xyz/"
+repository = "https://github.com/anza-xyz/flatrecord"
+license = "Apache-2.0"
 
 [lib]
 proc-macro = true

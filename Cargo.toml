@@ -19,3 +19,11 @@ resolver = "3"
 flatrecord-derive = { path = "flatrecord-derive", version = "0.1.0" }
 thiserror = "2.0.18"
 wincode = { version = "0.5.5", features = ["derive"] }
+
+[dev-dependencies]
+criterion = "0.5.1"
+wincode-dynamic = { git = "https://github.com/cpubot/wincode-dynamic.git", rev = "2fc898273636dccbcb74005d923b095043f5b20e" }
+
+[[bench]]
+name = "dynamic_parsing"
+harness = false

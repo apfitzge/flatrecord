@@ -24,9 +24,11 @@ the payload.
 
 ## Example
 
-See [`examples/records.rs`](examples/records.rs) for a runnable end-to-end example
-(`cargo run --example records`) covering the derive, encoding, and dynamic decoding
-against an exported schema.
+See [`examples/struct_root.rs`](examples/struct_root.rs) for a runnable end-to-end
+struct-root example (`cargo run --example struct_root`) with a `FlatEnum` `state`
+field and dynamic decoding against an exported schema. [`examples/struct_root_vec.rs`](examples/struct_root_vec.rs)
+shows a struct root with `Vec<u64>`, and [`examples/records.rs`](examples/records.rs)
+demonstrates tagged-union roots.
 
 The `Schema` itself is serializable (via [`wincode`]), so a producer can ship the
 schema bytes alongside the record stream and the consumer can reconstruct it,
